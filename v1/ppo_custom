@@ -1,0 +1,130 @@
+#%% Import
+import gym
+import torch
+import numpy as np
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_util import make_vec_env
+from custom_inverted_pendulum import InvertedPendulumEnv
+import enum
+from tqdm import tqdm
+import mujoco
+import mediapy as media
+import matplotlib.pyplot as plt
+
+device = ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+
+
+class Resolution(enum.Enum):
+    SD = (480, 640)
+    HD = (720, 1280)
+    UHD = (2160, 3840)
+
+resolution = Resolution.SD
+
+# #%% CAMERA
+# class Resolution(enum.Enum):
+#   SD = (480, 640)
+#   HD = (720, 1280)
+#   UHD = (2160, 3840)
+#
+# def quartic(t: float) -> float:
+#   return 0 if abs(t) > 1 else (1 - t**2) ** 2
+#
+# def blend_coef(t: float, duration: float, std: float) -> float:
+#   normalised_time = 2 * t / duration - 1
+#   return quartic(normalised_time / std)
+#
+# def unit_smooth(normalised_time: float) -> float:
+#   return 1 - np.cos(normalised_time * 2 * np.pi)
+#
+# def azimuth(
+#     time: float, duration: float, total_rotation: float, offset: float) -> float:
+#   return offset + unit_smooth(time / duration) * total_rotation
+#
+# def camera():
+#     # Parameters
+#     res = Resolution.SD
+#     fps = 60
+#     duration = 5.0
+#     total_rot = 60
+#     blend_std = .8
+#     h, w = res.value
+#
+#     model_xml = "custom_lib/inverted_pendulum.xml"
+#     model = mujoco.MjModel.from_xml_path(str(model_xml))
+#     data = mujoco.MjData(model)
+#
+#     renderer = mujoco.Renderer(model, height=h, width=w)
+#     mujoco.mj_forward(model, data)
+#     renderer.update_scene(data)
+#
+#     plt.imshow(renderer.render())
+#     plt.show()
+#
+#     # Rendering options for visual and collision geoms.
+#     vis = mujoco.MjvOption()
+#     vis.geomgroup[2] = True
+#     vis.geomgroup[3] = False
+#     coll = mujoco.MjvOption()
+#     coll.geomgroup[2] = False
+#     coll.geomgroup[3] = True
+#     coll.flags[mujoco.mjtVisFlag.mjVIS_CONVEXHULL] = True
+#
+#     # Kamera olusturuluyor
+#     cam = mujoco.MjvCamera()
+#     mujoco.mjv_defaultFreeCamera(model, cam)
+#     cam.distance = 5
+#     offset = model.vis.global_.azimuth
+#
+#
+#     nsteps = int(np.ceil(duration / model.opt.timestep))
+#     perturb = np.random.randn(nsteps, model.nu)
+#
+#     frames = []
+#     for i in tqdm(range(nsteps)):
+#         mujoco.mj_step(model, data)
+#         if len(frames) < data.time * fps:
+#             cam.azimuth = azimuth(data.time, duration, total_rot, offset)
+#             renderer.update_scene(data, cam, scene_option=vis)
+#             vispix = renderer.render().copy().astype(np.float32)
+#             renderer.update_scene(data, cam, scene_option=coll)
+#             collpix = renderer.render().copy().astype(np.float32)
+#             b = blend_coef(data.time, duration, blend_std)
+#             frame = (1 - b) * vispix + b * collpix
+#             frame = frame.astype(np.uint8)
+#             frames.append(frame)
+#
+#     media.write_video("output2.mp4", frames, fps=fps)
+#     print("Video kaydedildi: output.mp4")
+
+#%% PPO
+def train():
+    env = make_vec_env(lambda: InvertedPendulumEnv(), n_envs=4)
+    policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]), activation_fn=torch.nn.ReLU)
+    model = PPO("MlpPolicy", env, verbose=1, device="cuda", policy_kwargs=policy_kwargs)
+    model.learn(total_timesteps=1e6, tb_log_name="ppo_inverted_pendulum")
+    model_save_path = "trained_model.zip"
+    model.save(model_save_path)
+    print(f"Model kaydedildi: {model_save_path}")
+    env.close()
+
+# Eğitim Bitti !!!
+def test():
+    env = InvertedPendulumEnv(render_mode="human")
+    trained_model = PPO.load("trained_model.zip")
+    obs = env.reset()[0]
+    done = False
+    while not done:
+        action, _ = trained_model.predict(obs)
+        obs, reward, done, _, _ = env.step(action)
+        env.save_video(output_path="output.mp4", duration=10.0, fps=60, resolution=(480, 480), total_rot=60,
+                       blend_std=0.8)
+        env.render()
+
+    # env.save_video(output_path="output.mp4", duration=5.0, fps=60, resolution=(480, 480), total_rot=60, blend_std=0.8)
+    env.close()
+
+if __name__ == "__main__":
+    # camera()
+    # train()
+    test()
